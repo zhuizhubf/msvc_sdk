@@ -65,23 +65,24 @@ jobs:
         shell: pwsh
         run: scripts/00-preflight.ps1
 
-      - name: 下载 VS2008 SP1 ISO（官方直链 + 重试/续传）
+      - name: 下载 VS2008 SP1 ISO（官方预设 + 重试/续传）
         shell: pwsh
+        # -Preset 内置官方直链；仅当手动传入非空 Url 时覆盖。彻底避免 "-Url ''" 空串报错
         run: >-
           scripts/01-fetch-iso.ps1
-          -Url "${{ inputs.vs2008_iso_url }}"
+          -Preset vs2008
+          -Url "${{ inputs.vs2008_iso_url || '' }}"
           -OutFile "$env:VS2008_ISO"
-          -Sha1 "${{ inputs.vs2008_iso_sha1 }}"
-          -MinBytes 800MB
+          -Sha1 "${{ inputs.vs2008_iso_sha1 || '' }}"
 
-      - name: 下载 Windows SDK 7.1 ISO（官方直链 + SHA1 校验）
+      - name: 下载 Windows SDK 7.1 ISO（官方预设 + SHA1 校验）
         shell: pwsh
         run: >-
           scripts/01-fetch-iso.ps1
-          -Url "${{ inputs.sdk_iso_url }}"
+          -Preset sdk71
+          -Url "${{ inputs.sdk_iso_url || '' }}"
           -OutFile "$env:SDK_ISO"
-          -Sha1 "${{ inputs.sdk_iso_sha1 }}"
-          -MinBytes 500MB
+          -Sha1 "${{ inputs.sdk_iso_sha1 || '' }}"
 
       - name: 静默安装 VS2008 (VC++9)
         shell: pwsh

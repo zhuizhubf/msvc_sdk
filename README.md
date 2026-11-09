@@ -24,6 +24,28 @@ SDK 7.1 ISO 官方 SHA1（x64）：`9203529F5F70D556A60C37F118A95214E6D10B5A`
 2. Actions 页 → 选 `build-vs2008-portable` 或 `build-vs2010-portable` → Run workflow。
 3. 跑完在 Artifacts 下载对应 zip。
 
+## 关于「-Url 空字符串」报错的修复
+原报错：`Cannot bind argument to parameter 'Url' because it is an empty string.`
+根因：被 `push` 触发（或手动留空）时 `${{ inputs.xxx }}` 为空串，`-Url ""` 覆盖了默认值。
+修法（已落地）：
+- `01-fetch-iso.ps1` 内置 `Preset` 表（vs2008/sdk71/kb 官方直链），`-Url` 改为非 Mandatory，**留空自动回落 Preset**。
+- 工作流改为 `-Preset vs2008` / `-Preset sdk71` / `-Preset kb`，`inputs` 用 `|| ''` 兜底。
+- 现在无论 push 还是手动留空，都不会再出现空 URL。
+
+## 可选：用 xmake 统一编排（xmake.lua + build-vs2008-xmake.yml）
+把 下载/安装/打包/构建 收敛为 4 个命令，逻辑集中在 `xmake.lua`，本地也能复现：
+```
+xmake f --toolset=2008   # 或 2010
+xmake fetch              # 下载官方 ISO（带缓存，命中即跳过）
+xmake install            # 挂载并静默安装
+xmake pack               # 抽目录 + 生成 clenv.bat + 打包 zip
+xmake build             # 用绿色包编译并运行 src/hello.cpp
+```
+- 官方直链写在 `xmake.lua` 的 `PRESET` 表里，**不从 YAML 透传 URL**，天然免疫空串问题。
+- `xmake build` 通过 `call clenv.bat` 注入环境后调原生 `cl /MT`，绕开 xmake 对注册表 VS 探测的依赖。
+- 边界：xmake 只做编排与构建驱动，编译器本体仍是官方 ISO 静默安装，脚本不含任何微软二进制。
+- 二选一：想纯 PowerShell 用 `build-vs2008.yml`；想统一脚本体验用 `build-vs2008-xmake.yml`。
+
 ## 产物使用（任意 Windows 机，无需装 VS、无需管理员）
 ```
 clenv.bat x86            :: 初始化 x86 环境（或 x64）

@@ -72,18 +72,18 @@ jobs:
         shell: pwsh
         run: >-
           scripts/01-fetch-iso.ps1
-          -Url "${{ inputs.sdk_iso_url }}"
+          -Preset sdk71
+          -Url "${{ inputs.sdk_iso_url || '' }}"
           -OutFile "$env:SDK_ISO"
-          -Sha1 "${{ inputs.sdk_iso_sha1 }}"
-          -MinBytes 500MB
+          -Sha1 "${{ inputs.sdk_iso_sha1 || '' }}"
 
       - name: 下载 KB2519277（VC10 编译器 SP1 修补，官方）
         shell: pwsh
         run: >-
           scripts/01-fetch-iso.ps1
-          -Url "${{ inputs.kb2519277_url }}"
+          -Preset kb
+          -Url "${{ inputs.kb2519277_url || '' }}"
           -OutFile "$env:GITHUB_WORKSPACE\_dl\vc-compiler-kb2519277.exe"
-          -MinBytes 100MB
           -AllowExe
 
       - name: （可选）下载 VS2010 ISO —— 仅当传入了 URL
