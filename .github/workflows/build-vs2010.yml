@@ -1,0 +1,143 @@
+# 构建 MSVC 2010 (VC10 / _MSC_VER 1600) 便携包 —— 独立工作流，不含 VS2008 任何内容
+#
+# ★ 关于「2010 在哪、要微软官方」：
+#   VS2010 完整产品 ISO 微软已从公开下载中心下线，官方页面明确说明：
+#   “需要登录 Visual Studio 订阅账号 (my.visualstudio.com) 或批量授权 (VLSC) 才能获取”。
+#   但 VC10 编译器本身有**微软官方仍在公开提供**的正统来源：
+#     Windows SDK 7.1 (id=8442) 安装时勾选 "Visual C++ Compilers" 即装 cl.exe/link.exe (16.xx)。
+#   本工作流即走这条路：纯微软官方直链，不依赖任何第三方存档。
+#   若你需要 MFC/ATL，则必须自备 my.visualstudio.com 的 VS2010 ISO，
+#   通过 workflow_dispatch 的 vs2010_iso_url 传入（留空则只做纯 SDK 编译器包）。
+#
+# 官方取件：
+#   Windows SDK 7.1 x64 : https://www.microsoft.com/en-my/download/details.aspx?id=8442
+#                         GRMSDKX_EN_DVD.iso  570.9 MB  SHA1 9203529F5F70D556A60C37F118A95214E6D10B5A
+#   VC10 编译器 SP1 修补: https://www.microsoft.com/download/details.aspx?id=4422  (KB2519277, 121MB)
+#                         修复装了 VS2010 SP1 后 SDK 7.1 的 cl.exe 被移除 / LNK1123
+
+name: build-vs2010-portable
+
+on:
+  workflow_dispatch:
+    inputs:
+      sdk_iso_url:
+        description: 'Windows SDK 7.1 x64 ISO 直链（微软官方 id=8442，自带 VC10 编译器）'
+        default: 'https://download.microsoft.com/download/A/6/A/A6AC035D-DA3F-4F0C-ADA4-37C8E5D34E3D/GRMSDKX_EN_DVD.iso'
+        type: string
+      sdk_iso_sha1:
+        description: 'SDK 7.1 ISO 的 SHA1（官方值）'
+        default: '9203529F5F70D556A60C37F118A95214E6D10B5A'
+        type: string
+      kb2519277_url:
+        description: 'VC++ 2010 SP1 编译器更新直链（微软官方 id=4422）'
+        default: 'https://download.microsoft.com/download/0/B/D/0BDA894F-2CCD-4C2C-B5A7-4EB1171962E5/vc-compiler-kb2519277.exe'
+        type: string
+      vs2010_iso_url:
+        description: '【可选】VS2010 ISO 直链，仅当你需要 MFC/ATL 时填（需 my.visualstudio.com 合法授权）。留空=纯编译器包'
+        default: ''
+        type: string
+      arch:
+        description: '目标架构'
+        default: 'x86'
+        type: choice
+        options: [x86, x64]
+  push:
+    branches: ['**']
+    paths: ['vs2010/**', '.github/workflows/build-vs2010.yml']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    env:
+      SDK_ISO: ${{ github.workspace }}\_dl\GRMSDKX.iso
+      VS2010_ISO: ${{ github.workspace }}\_dl\VS2010.iso
+      OUT_DIR: ${{ github.workspace }}\msvc2010-portable
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 预检环境（.NET4 必须存在，否则 SDK 会跳过 VC 编译器组件）
+        shell: pwsh
+        run: scripts/00-preflight.ps1 -RequireDotNet4
+
+      - name: 下载 Windows SDK 7.1 ISO（官方直链 + SHA1 校验）
+        shell: pwsh
+        run: >-
+          scripts/01-fetch-iso.ps1
+          -Url "${{ inputs.sdk_iso_url }}"
+          -OutFile "$env:SDK_ISO"
+          -Sha1 "${{ inputs.sdk_iso_sha1 }}"
+          -MinBytes 500MB
+
+      - name: 下载 KB2519277（VC10 编译器 SP1 修补，官方）
+        shell: pwsh
+        run: >-
+          scripts/01-fetch-iso.ps1
+          -Url "${{ inputs.kb2519277_url }}"
+          -OutFile "$env:GITHUB_WORKSPACE\_dl\vc-compiler-kb2519277.exe"
+          -MinBytes 100MB
+          -AllowExe
+
+      - name: （可选）下载 VS2010 ISO —— 仅当传入了 URL
+        if: ${{ inputs.vs2010_iso_url != '' }}
+        shell: pwsh
+        run: >-
+          scripts/01-fetch-iso.ps1
+          -Url "${{ inputs.vs2010_iso_url }}"
+          -OutFile "$env:VS2010_ISO"
+          -MinBytes 1GB
+
+      - name: 静默安装 Windows SDK 7.1（勾选 VC++ Compilers = VC10）
+        shell: pwsh
+        run: scripts/03-install-sdk71.ps1 -IsoPath "$env:SDK_ISO" -WithVc10
+
+      - name: 打 KB2519277
+        shell: pwsh
+        run: scripts/06-apply-kb.ps1 -Exe "$env:GITHUB_WORKSPACE\_dl\vc-compiler-kb2519277.exe"
+
+      - name: （可选）静默安装 VS2010 以补齐 MFC/ATL
+        if: ${{ inputs.vs2010_iso_url != '' }}
+        shell: pwsh
+        run: scripts/02b-install-vs2010.ps1 -IsoPath "$env:VS2010_ISO"
+
+      - name: 收集 VC10 + SDK 目录并生成绿色包
+        shell: pwsh
+        run: scripts/04-collect.ps1 -Toolset 2010 -Arch "${{ inputs.arch }}" -OutDir "$env:OUT_DIR"
+
+      - name: 自检 —— 用绿色包编译并运行 hello.cpp（期望 _MSC_VER 1600）
+        shell: pwsh
+        run: scripts/05-selftest.ps1 -Root "$env:OUT_DIR" -Arch "${{ inputs.arch }}" -ExpectMscVer 1600
+
+      - name: 打包
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "$env:OUT_DIR\*" -DestinationPath "$env:GITHUB_WORKSPACE\msvc2010-portable-win.zip" -Force
+          Get-Item "$env:GITHUB_WORKSPACE\msvc2010-portable-win.zip" | Select-Object Name,Length
+
+      - name: 上传 Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msvc2010-portable-win
+          path: msvc2010-portable-win.zip
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: 上传安装日志（仅在失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vs2010-install-logs
+          path: |
+            ${{ env.RUNNER_TEMP }}\*.log
+            ${{ env.RUNNER_TEMP }}\sdksetup\*.log
+          retention-days: 7
+          if-no-files-found: ignore
