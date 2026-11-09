@@ -1,0 +1,126 @@
+# 构建 MSVC 2008 (VC9 / _MSC_VER 1500) 便携包 —— 独立工作流，不含 VS2010 任何内容
+#
+# 触发：手动 workflow_dispatch，或 push 到 vs2008/** 路径时自动
+# 产物：msvc2008-portable-win.zip （Artifact，保留 30 天）
+#
+# 官方取件（微软下载中心至今在线）：
+#   VS2008 SP1 中文 ISO : https://www.microsoft.com/zh-cn/download/details.aspx?id=13276
+#                         FileName VS2008SP1CHSX1512981.iso  898.1 MB  <- 用户已实测
+#   Windows SDK 7.1 x64 : https://www.microsoft.com/en-my/download/details.aspx?id=8442
+#                         FileName GRMSDKX_EN_DVD.iso  570.9 MB
+#                         SHA1 9203529F5F70D556A60C37F118A95214E6D10B5A
+
+name: build-vs2008-portable
+
+on:
+  workflow_dispatch:
+    inputs:
+      vs2008_iso_url:
+        description: 'VS2008 SP1 ISO 直链（默认微软官方 id=13276）'
+        default: 'https://download.microsoft.com/download/1/9/d/19d22169-a4b2-455f-8c28-ed137bd91487/VS2008SP1CHSX1512981.iso'
+        type: string
+      vs2008_iso_sha1:
+        description: 'VS2008 ISO 的 SHA1（留空则只记录不校验）'
+        default: ''
+        type: string
+      sdk_iso_url:
+        description: 'Windows SDK 7.1 x64 ISO 直链（默认微软官方 id=8442）'
+        default: 'https://download.microsoft.com/download/A/6/A/A6AC035D-DA3F-4F0C-ADA4-37C8E5D34E3D/GRMSDKX_EN_DVD.iso'
+        type: string
+      sdk_iso_sha1:
+        description: 'SDK 7.1 ISO 的 SHA1（官方值，留空跳过校验）'
+        default: '9203529F5F70D556A60C37F118A95214E6D10B5A'
+        type: string
+      arch:
+        description: '目标架构'
+        default: 'x86'
+        type: choice
+        options: [x86, x64]
+  push:
+    branches: ['**']
+    paths: ['vs2008/**', '.github/workflows/build-vs2008.yml']
+
+# 同一分支只跑最新一次，避免 ISO 重复占 14GB 磁盘
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # windows-2022 自带 .NET 4.x + 7-Zip，满足 SDK 7.1 静默安装前置
+    runs-on: windows-2022
+    timeout-minutes: 120
+    env:
+      VS2008_ISO: ${{ github.workspace }}\_dl\VS2008SP1.iso
+      SDK_ISO: ${{ github.workspace }}\_dl\GRMSDKX.iso
+      OUT_DIR: ${{ github.workspace }}\msvc2008-portable
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 预检环境（.NET4 / 7-Zip / 磁盘 / 管理员）
+        shell: pwsh
+        run: scripts/00-preflight.ps1
+
+      - name: 下载 VS2008 SP1 ISO（官方直链 + 重试/续传）
+        shell: pwsh
+        run: >-
+          scripts/01-fetch-iso.ps1
+          -Url "${{ inputs.vs2008_iso_url }}"
+          -OutFile "$env:VS2008_ISO"
+          -Sha1 "${{ inputs.vs2008_iso_sha1 }}"
+          -MinBytes 800MB
+
+      - name: 下载 Windows SDK 7.1 ISO（官方直链 + SHA1 校验）
+        shell: pwsh
+        run: >-
+          scripts/01-fetch-iso.ps1
+          -Url "${{ inputs.sdk_iso_url }}"
+          -OutFile "$env:SDK_ISO"
+          -Sha1 "${{ inputs.sdk_iso_sha1 }}"
+          -MinBytes 500MB
+
+      - name: 静默安装 VS2008 (VC++9)
+        shell: pwsh
+        run: scripts/02-install-vs2008.ps1 -IsoPath "$env:VS2008_ISO"
+
+      - name: 静默安装 Windows SDK 7.1
+        shell: pwsh
+        run: scripts/03-install-sdk71.ps1 -IsoPath "$env:SDK_ISO"
+
+      - name: 收集 VC9 + SDK 目录并生成绿色包
+        shell: pwsh
+        run: scripts/04-collect.ps1 -Toolset 2008 -Arch "${{ inputs.arch }}" -OutDir "$env:OUT_DIR"
+
+      - name: 自检 —— 用绿色包编译并运行 hello.cpp
+        shell: pwsh
+        run: scripts/05-selftest.ps1 -Root "$env:OUT_DIR" -Arch "${{ inputs.arch }}"
+
+      - name: 打包
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "$env:OUT_DIR\*" -DestinationPath "$env:GITHUB_WORKSPACE\msvc2008-portable-win.zip" -Force
+          Get-Item "$env:GITHUB_WORKSPACE\msvc2008-portable-win.zip" | Select-Object Name,Length
+
+      - name: 上传 Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msvc2008-portable-win
+          path: msvc2008-portable-win.zip
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: 上传安装日志（仅在失败时，便于排错）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vs2008-install-logs
+          path: |
+            ${{ env.RUNNER_TEMP }}\*.log
+            ${{ env.RUNNER_TEMP }}\sdksetup\*.log
+          retention-days: 7
+          if-no-files-found: ignore
