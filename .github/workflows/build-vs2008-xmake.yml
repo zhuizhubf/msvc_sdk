@@ -1,0 +1,59 @@
+# 用 xmake 编排的 MSVC 2008 便携包构建（与 build-vs2008.yml 二选一）
+# 优点：下载/安装/打包/构建收敛为 4 个 xmake 命令，逻辑集中在 xmake.lua，便于本地复现
+# 触发：仅手动。产物 msvc2008-portable-win.zip
+
+name: build-vs2008-xmake
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 xmake
+        shell: pwsh
+        run: |
+          iwr https://xmake.io/psget.text -fo install-xmake.ps1
+          ./install-xmake.ps1
+          xmake --version
+
+      - name: 预检环境
+        shell: pwsh
+        run: scripts/00-preflight.ps1
+
+      # xmake 从 xmake.lua 的 PRESET 读取官方直链，无需从 YAML 透传 URL，从根源避免空串报错
+      - name: xmake fetch（下载官方 ISO，带缓存）
+        shell: pwsh
+        run: xmake f --toolset=2008 && xmake fetch -y
+
+      - name: xmake install（静默安装）
+        shell: pwsh
+        run: xmake install -y
+
+      - name: xmake pack（抽目录 + 打包）
+        shell: pwsh
+        run: xmake pack -y
+
+      - name: xmake build（编译并运行自检程序）
+        shell: pwsh
+        run: xmake build -y
+
+      - name: 上传 Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msvc2008-portable-win
+          path: msvc2008-portable-win.zip
+          retention-days: 30
+          if-no-files-found: warn

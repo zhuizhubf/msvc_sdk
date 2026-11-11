@@ -1,40 +1,52 @@
 # 构建 MSVC 2010 (VC10 / _MSC_VER 1600) 便携包 —— 独立工作流，不含 VS2008 任何内容
 #
-# ★ 关于「2010 在哪、要微软官方」：
-#   VS2010 完整产品 ISO 微软已从公开下载中心下线，官方页面明确说明：
-#   “需要登录 Visual Studio 订阅账号 (my.visualstudio.com) 或批量授权 (VLSC) 才能获取”。
-#   但 VC10 编译器本身有**微软官方仍在公开提供**的正统来源：
-#     Windows SDK 7.1 (id=8442) 安装时勾选 "Visual C++ Compilers" 即装 cl.exe/link.exe (16.xx)。
-#   本工作流即走这条路：纯微软官方直链，不依赖任何第三方存档。
-#   若你需要 MFC/ATL，则必须自备 my.visualstudio.com 的 VS2010 ISO，
-#   通过 workflow_dispatch 的 vs2010_iso_url 传入（留空则只做纯 SDK 编译器包）。
+# ★ ISO 从哪来（重要）：
+#   VS2010 完整产品 ISO 微软只对订阅用户开放；Windows SDK 7.1 的稳定直链也已下线
+#   （下载页直链会轮换，硬编码必 404）。因此本工作流【不自动下载大 ISO】，改为：
+#     你本机从 https://msdn.itellyou.cn 用迅雷/ed2k 下载官方原版 ISO，校验 SHA1 后提供给 runner。
 #
-# 官方取件：
-#   Windows SDK 7.1 x64 : https://www.microsoft.com/en-my/download/details.aspx?id=8442
-#                         GRMSDKX_EN_DVD.iso  570.9 MB  SHA1 9203529F5F70D556A60C37F118A95214E6D10B5A
-#   VC10 编译器 SP1 修补: https://www.microsoft.com/download/details.aspx?id=4422  (KB2519277, 121MB)
-#                         修复装了 VS2010 SP1 后 SDK 7.1 的 cl.exe 被移除 / LNK1123
+#   提供 ISO 的两种方式（二选一）：
+#     A) 走缓存：把 ISO 命名放到 _dl\ 下对应路径（见 env），脚本命中缓存即跳过下载。
+#        适用你用 actions/cache 或自托管 runner 预置 ISO 的场景。
+#     B) 走直链：把 ISO 传到你能访问的任何 HTTP 位置（OneDrive/内网/对象存储），
+#        手动触发时把 URL 填进 iso_url 参数，脚本会下载并按 itellyou 的 SHA1 校验。
+#
+#   itellyou VS2010 官方原版镜像（ed2k）与 SHA1：
+#     旗舰版 CHS : cn_visual_studio_2010_ultimate_x86_dvd_532347.iso  SHA1 44B73423A7BBCE38D06BA55ECD821946630BEA4D  2.50GB
+#     专业版 CHS : cn_visual_studio_2010_professional_x86_dvd_532145.iso  SHA1 33D323446131AB9565082D65C9C380BBD7FF228F  2.41GB
+#     SP1 多语言 : mu_visual_studio_2010_sp1_x86_dvd_651704.iso  SHA1 61C2088850185EDE8E18001D1EF3E6D12DAA5692  1.48GB
+#
+#   只装 SDK 7.1 拿纯编译器（不要 MFC/ATL）时：把 GRMSDKX_EN_DVD.iso（微软官方 id=8442，
+#   SHA1 9203529F5F70D556A60C37F118A95214E6D10B5A）放到 sdk_iso_path，compiler_only=true。
+#
+#   KB2519277（VC10 编译器 SP1 修补，官方 id=4422）仍可自动下载（小文件、直链稳定），
+#   用于修复装了 VS2010 SP1 后 SDK 7.1 的 cl.exe 被移除 / LNK1123。
 
 name: build-vs2010-portable
 
 on:
   workflow_dispatch:
     inputs:
-      sdk_iso_url:
-        description: 'Windows SDK 7.1 x64 ISO 直链（微软官方 id=8442，自带 VC10 编译器）'
-        default: 'https://download.microsoft.com/download/A/6/A/A6AC035D-DA3F-4F0C-ADA4-37C8E5D34E3D/GRMSDKX_EN_DVD.iso'
+      compiler_only:
+        description: 'true=只装 Windows SDK 7.1 拿纯 VC10 编译器（不要MFC/ATL）；false=装 VS2010 完整产品（需 iso_url 提供官方 ISO）'
+        default: 'true'
+        type: choice
+        options: ['true', 'false']
+      iso_url:
+        description: '【compiler_only=false 时必填】VS2010 官方 ISO 的 HTTP 直链（你自己托管）。留空则走缓存路径 _dl\VS2010.iso'
+        default: ''
         type: string
-      sdk_iso_sha1:
-        description: 'SDK 7.1 ISO 的 SHA1（官方值）'
-        default: '9203529F5F70D556A60C37F118A95214E6D10B5A'
+      iso_sha1:
+        description: 'VS2010 ISO 的 SHA1（itellyou 官方值，按你下的版本填）'
+        default: '44B73423A7BBCE38D06BA55ECD821946630BEA4D'
+        type: string
+      sdk_iso_url:
+        description: '【compiler_only=true 时可填】SDK 7.1 ISO 的 HTTP 直链。留空则走缓存路径 _dl\GRMSDKX_EN_DVD.iso'
+        default: ''
         type: string
       kb2519277_url:
         description: 'VC++ 2010 SP1 编译器更新直链（微软官方 id=4422）'
         default: 'https://download.microsoft.com/download/0/B/D/0BDA894F-2CCD-4C2C-B5A7-4EB1171962E5/vc-compiler-kb2519277.exe'
-        type: string
-      vs2010_iso_url:
-        description: '【可选】VS2010 ISO 直链，仅当你需要 MFC/ATL 时填（需 my.visualstudio.com 合法授权）。留空=纯编译器包'
-        default: ''
         type: string
       arch:
         description: '目标架构'
@@ -57,56 +69,62 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 120
     env:
-      SDK_ISO: ${{ github.workspace }}\_dl\GRMSDKX.iso
+      SDK_ISO: ${{ github.workspace }}\_dl\GRMSDKX_EN_DVD.iso
       VS2010_ISO: ${{ github.workspace }}\_dl\VS2010.iso
+      KB_EXE: ${{ github.workspace }}\_dl\vc-compiler-kb2519277.exe
       OUT_DIR: ${{ github.workspace }}\msvc2010-portable
 
     steps:
       - uses: actions/checkout@v4
 
+      - name: 缓存 ISO/补丁（_dl 目录，命中则跳过下载）
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\_dl
+          key: msvc2010-dl-${{ inputs.compiler_only }}-v1
+
       - name: 预检环境（.NET4 必须存在，否则 SDK 会跳过 VC 编译器组件）
         shell: pwsh
         run: scripts/00-preflight.ps1 -RequireDotNet4
 
-      - name: 下载 Windows SDK 7.1 ISO（官方直链 + SHA1 校验）
+      # ---------- 纯编译器模式：Windows SDK 7.1 ----------
+      - name: （纯编译器模式）准备 SDK 7.1 ISO（缓存命中 / -Url 下载 + SHA1 校验）
+        if: ${{ inputs.compiler_only == 'true' }}
         shell: pwsh
         run: >-
           scripts/01-fetch-iso.ps1
           -Preset sdk71
           -Url "${{ inputs.sdk_iso_url || '' }}"
           -OutFile "$env:SDK_ISO"
-          -Sha1 "${{ inputs.sdk_iso_sha1 || '' }}"
+          -Sha1 "9203529F5F70D556A60C37F118A95214E6D10B5A"
 
-      - name: 下载 KB2519277（VC10 编译器 SP1 修补，官方）
-        shell: pwsh
-        run: >-
-          scripts/01-fetch-iso.ps1
-          -Preset kb
-          -Url "${{ inputs.kb2519277_url || '' }}"
-          -OutFile "$env:GITHUB_WORKSPACE\_dl\vc-compiler-kb2519277.exe"
-          -AllowExe
-
-      - name: （可选）下载 VS2010 ISO —— 仅当传入了 URL
-        if: ${{ inputs.vs2010_iso_url != '' }}
-        shell: pwsh
-        run: >-
-          scripts/01-fetch-iso.ps1
-          -Url "${{ inputs.vs2010_iso_url }}"
-          -OutFile "$env:VS2010_ISO"
-          -MinBytes 1GB
-
-      - name: 静默安装 Windows SDK 7.1（勾选 VC++ Compilers = VC10）
+      - name: （纯编译器模式）静默安装 Windows SDK 7.1（勾选 VC++ Compilers = VC10）
+        if: ${{ inputs.compiler_only == 'true' }}
         shell: pwsh
         run: scripts/03-install-sdk71.ps1 -IsoPath "$env:SDK_ISO" -WithVc10
 
-      - name: 打 KB2519277
+      # ---------- 完整产品模式：VS2010 ----------
+      - name: （完整模式）准备 VS2010 ISO（缓存命中 / -Url 下载 + itellyou SHA1 校验）
+        if: ${{ inputs.compiler_only == 'false' }}
         shell: pwsh
-        run: scripts/06-apply-kb.ps1 -Exe "$env:GITHUB_WORKSPACE\_dl\vc-compiler-kb2519277.exe"
+        run: >-
+          scripts/01-fetch-iso.ps1
+          -Preset vs2010
+          -Url "${{ inputs.iso_url || '' }}"
+          -OutFile "$env:VS2010_ISO"
+          -Sha1 "${{ inputs.iso_sha1 || '' }}"
 
-      - name: （可选）静默安装 VS2010 以补齐 MFC/ATL
-        if: ${{ inputs.vs2010_iso_url != '' }}
+      - name: （完整模式）静默安装 VS2010
+        if: ${{ inputs.compiler_only == 'false' }}
         shell: pwsh
         run: scripts/02b-install-vs2010.ps1 -IsoPath "$env:VS2010_ISO"
+
+      # ---------- 公共：打 KB + 收集 + 自检 + 打包 ----------
+      - name: 准备并打 KB2519277（VC10 编译器 SP1 修补，官方直链）
+        shell: pwsh
+        run: >-
+          scripts/01-fetch-iso.ps1 -Preset kb -Url "${{ inputs.kb2519277_url || '' }}" -OutFile "$env:KB_EXE" -AllowExe;
+          scripts/06-apply-kb.ps1 -Exe "$env:KB_EXE"
 
       - name: 收集 VC10 + SDK 目录并生成绿色包
         shell: pwsh
